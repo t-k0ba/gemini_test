@@ -47,7 +47,7 @@
     </div>
     <div id="controls" class="panel">
       <div>
-        操作: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / 方向キー = 移動・ストレイフ, <kbd>Space</kbd> = ジャンプ/空中ジャンプ, <kbd>Shift</kbd> = 走る, <kbd>F</kbd> = パンチ,
+        操作: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> = カメラ相対移動, 方向キー = キャラクター相対移動・回転, <kbd>Space</kbd> = ジャンプ/空中ジャンプ, <kbd>Shift</kbd> = 走る, <kbd>F</kbd> = パンチ,
         マウスドラッグ = カメラ回転, <kbd>Q</kbd>/<kbd>E</kbd> = カメラ左右
       </div>
       <div>空中ジャンプは<strong>1回だけ</strong>（空中ジャンプ中には空中ジャンプできない）</div>
@@ -63,6 +63,8 @@
 
   <script type="module">
     import * as THREE from 'https://unpkg.com/three@0.157.0/build/three.module.js';
+
+    let hat;
 
     // ---------- Renderer & Scene ----------
     const canvas = document.getElementById('c');
@@ -169,7 +171,7 @@
 
 
     // Hat
-    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.7, 0.6, 16), new THREE.MeshStandardMaterial({color:0xd22027, roughness:.6}));
+    hat = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.7, 0.6, 16), new THREE.MeshStandardMaterial({color:0xd22027, roughness:.6}));
     hat.position.set(0, 3.6, 0);
     hat.castShadow = true; head.add(hat);
     const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.1, 16, 1, false, 0, Math.PI), new THREE.MeshStandardMaterial({color:0xd22027, roughness:.6}));
@@ -302,30 +304,44 @@
     const g = -20.0;
     function updatePlayer(dt){
       // read inputs
-      playerState.move.f = (keys.has('w') || keys.has('arrowup') ? 1:0) + (keys.has('s') || keys.has('arrowdown') ? -1:0);
-      playerState.move.r = (keys.has('d') || keys.has('arrowright') ? 1:0) + (keys.has('a') || keys.has('arrowleft') ? -1:0);
+      const wasd_f = (keys.has('w') ? 1:0) + (keys.has('s') ? -1:0);
+      const wasd_r = (keys.has('d') ? 1:0) + (keys.has('a') ? -1:0);
+      const arrow_f = (keys.has('arrowup') ? 1:0) + (keys.has('arrowdown') ? -1:0);
+      const arrow_r = (keys.has('arrowright') ? 1:0) + (keys.has('arrowleft') ? -1:0);
       playerState.run = keys.has('shift');
 
-      // move relative to camera yaw
-      const yaw = camYaw; // use camera heading
-      const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
-      const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-
       let wish = new THREE.Vector3();
-      wish.addScaledVector(forward, playerState.move.f);
-      wish.addScaledVector(right, playerState.move.r);
+      
+      // Prioritize arrow keys for tank controls
+      if (arrow_f !== 0 || arrow_r !== 0) {
+        if (arrow_r !== 0) {
+          playerState.yaw -= arrow_r * 2.5 * dt;
+        }
+        if (arrow_f !== 0) {
+          const forward = new THREE.Vector3(Math.sin(playerState.yaw), 0, Math.cos(playerState.yaw));
+          wish.addScaledVector(forward, arrow_f);
+        }
+        player.rotation.y = playerState.yaw;
+      } 
+      // Otherwise, use WASD for camera-relative movement
+      else if (wasd_f !== 0 || wasd_r !== 0) {
+        const yaw = camYaw;
+        const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+        const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+        wish.addScaledVector(forward, wasd_f);
+        wish.addScaledVector(right, wasd_r);
+
+        if(wish.lengthSq() > 0.01){
+            playerState.yaw = Math.atan2(wish.x, wish.z);
+            player.rotation.y = playerState.yaw;
+        }
+      }
+
       if(wish.lengthSq() > 0) wish.normalize();
 
       const maxSpeed = playerState.run ? 9 : 6;
-      const accel = 32 * dt;
       playerState.vel.x = THREE.MathUtils.damp(playerState.vel.x, wish.x * maxSpeed, 8, dt);
       playerState.vel.z = THREE.MathUtils.damp(playerState.vel.z, wish.z * maxSpeed, 8, dt);
-
-      // face movement direction if moving
-      if(wish.lengthSq() > 0.01){
-        playerState.yaw = Math.atan2(playerState.vel.x, playerState.vel.z);
-        player.rotation.y = playerState.yaw;
-      }
 
       // gravity
       playerState.vel.y += g * dt;
@@ -364,7 +380,9 @@
 
       // Hat spin decay
       if(hat.userData.spin && hat.userData.spin>0){
-        const s = Math.min(hat.userData.spin, 14*dt); hat.rotation.y += s; hat.userData.spin -= s;
+        const s = Math.min(hat.userData.spin, 14*dt); 
+        hat.rotation.y += s; 
+        hat.userData.spin -= s;
       }
     }
 
