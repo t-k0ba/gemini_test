@@ -122,17 +122,69 @@
     const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.9, 1.2, 6, 12), new THREE.MeshStandardMaterial({color:0x2962ff, roughness:.7}));
     body.castShadow = true; player.add(body); body.position.y = 1.7;
 
-    // Head
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.7, 16, 12), new THREE.MeshStandardMaterial({color:0xffe0bd, roughness:.7}));
-    head.position.y = 3.2; head.castShadow = true; player.add(head);
+    // Shirt
+    const torso = new THREE.Mesh(new THREE.SphereGeometry(0.7, 12, 10), new THREE.MeshStandardMaterial({color: 0xd22027, roughness: .7}));
+    torso.position.y = 2.3;
+    torso.scale.set(1, 0.8, 1);
+    player.add(torso);
 
-    // Rounder Hat (より丸い)
-    const hat = new THREE.Mesh(new THREE.SphereGeometry(0.95, 16, 12), new THREE.MeshStandardMaterial({color:0xd22027, roughness:.6}));
-    hat.scale.y = 0.72; // round cap vibe
-    hat.position.set(0, 3.55, 0);
-    hat.castShadow = true; player.add(hat);
-    const brim = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.07, 10, 24), new THREE.MeshStandardMaterial({color:0xd22027, roughness:.6}));
-    brim.rotation.x = Math.PI/2; brim.position.y = 3.2; brim.castShadow = true; player.add(brim);
+    // Head
+    const head = new THREE.Group();
+    player.add(head);
+    const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.7, 16, 12), new THREE.MeshStandardMaterial({color:0xffe0bd, roughness:.7}));
+    headMesh.position.y = 3.2; headMesh.castShadow = true; head.add(headMesh);
+
+    // Eyes
+    const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), new THREE.MeshStandardMaterial({color:0xffffff}));
+    eyeL.position.set(-0.22, 3.3, 0.6);
+    head.add(eyeL);
+    const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), new THREE.MeshStandardMaterial({color:0xffffff}));
+    eyeR.position.set(0.22, 3.3, 0.6);
+    head.add(eyeR);
+    const pupilL = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshStandardMaterial({color:0x000000}));
+    pupilL.position.set(-0.22, 3.3, 0.68);
+    head.add(pupilL);
+    const pupilR = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), new THREE.MeshStandardMaterial({color:0x000000}));
+    pupilR.position.set(0.22, 3.3, 0.68);
+    head.add(pupilR);
+
+    // Nose
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 8), new THREE.MeshStandardMaterial({color:0xffe0bd, roughness:.7}));
+    nose.position.set(0, 3.15, 0.6);
+    head.add(nose);
+
+    // Mustache
+    const mustache = new THREE.Group();
+    const mustacheMat = new THREE.MeshStandardMaterial({color: 0x4d2d0d, roughness: .7});
+    const m1 = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.15, 0.1), mustacheMat);
+    m1.position.set(0, 2.95, 0.65);
+    mustache.add(m1);
+    const m2 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.1), mustacheMat);
+    m2.position.set(0.2, 2.85, 0.65);
+    mustache.add(m2);
+    const m3 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.1, 0.1), mustacheMat);
+    m3.position.set(-0.2, 2.85, 0.65);
+    mustache.add(m3);
+    head.add(mustache);
+
+
+    // Hat
+    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.7, 0.6, 16), new THREE.MeshStandardMaterial({color:0xd22027, roughness:.6}));
+    hat.position.set(0, 3.6, 0);
+    hat.castShadow = true; head.add(hat);
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.1, 16, 1, false, 0, Math.PI), new THREE.MeshStandardMaterial({color:0xd22027, roughness:.6}));
+    brim.scale.x = 0.6;
+    brim.position.set(0, 3.35, 0.5);
+    brim.rotation.x = Math.PI/6;
+    brim.castShadow = true; head.add(brim);
+
+    // Buttons
+    const button1 = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 8), new THREE.MeshStandardMaterial({color:0xffff00, roughness:.5}));
+    button1.position.set(-0.25, 2.1, 0.8);
+    player.add(button1);
+    const button2 = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 8), new THREE.MeshStandardMaterial({color:0xffff00, roughness:.5}));
+    button2.position.set(0.25, 2.1, 0.8);
+    player.add(button2);
 
     // Fists (for punch)
     const armR = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.6, 6, 12), new THREE.MeshStandardMaterial({color:0xffe0bd}));
