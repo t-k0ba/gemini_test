@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SuperMaruo64 — single file</title>
+  <style>
+    html, body { margin:0; height:100%; overflow:hidden; background:#121212; font-family: system-ui, -apple-system, Segoe UI, Roboto, Noto Sans JP, Helvetica, Arial, sans-serif; }
+    #hud { position:fixed; inset:0; pointer-events:none; }
+    .panel { position:absolute; color:#fff; text-shadow:0 2px 6px rgba(0,0,0,.5); }
+    #title { left:12px; top:10px; line-height:1.35; }
+    #title h1 { margin:0 0 2px 0; font-size:18px; font-weight:800; letter-spacing:.4px; }
+    #title p { margin:2px 0 0; font-size:12px; opacity:.9; }
+
+    #controls { left:12px; bottom:12px; font-size:12px; opacity:.9; }
+    #controls kbd { background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15); padding:0 6px; border-radius:6px; margin:0 2px; }
+
+    #bossbar { position:absolute; top:10px; left:50%; transform:translateX(-50%); width:min(580px, 80vw); }
+    #bossbar .label { font-size:12px; color:#fff; opacity:.9; margin:0 0 6px 2px; }
+    #bossbar .bar { height:12px; border-radius:999px; background:rgba(255,255,255,.15); overflow:hidden; box-shadow: inset 0 1px 3px rgba(0,0,0,.35); }
+    #bossbar .fill { height:100%; width:100%; background: linear-gradient(90deg, #ff5a5a, #ffb15a); transition: width .15s ease-out; }
+
+    #status { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); text-align:center; }
+    #status h2 { font-size:42px; color:#fff; margin:0 0 8px; text-shadow:0 6px 18px rgba(0,0,0,.6); }
+    #status p { color:#fff; opacity:.9; margin:0; font-size:14px; }
+    #status.hidden { display:none; }
+
+    #corner { position:absolute; right:12px; bottom:12px; font-size:12px; color:#fff; opacity:.7; }
+
+    .btn { pointer-events:auto; background:#fff; color:#111; border:none; border-radius:10px; padding:8px 12px; font-weight:700; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.25); }
+    #resetBtn { position:absolute; right:12px; top:12px; }
+
+    /* subtle vignette */
+    #vignette { position:fixed; inset:0; pointer-events:none; box-shadow: inset 0 0 160px rgba(0,0,0,.35); }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <button id="resetBtn" class="btn" title="リセット">Reset</button>
+    <div id="title" class="panel">
+      <h1>SuperMaruo64</h1>
+      <p>Goal: <strong>ステージに存在するボスを倒す</strong>（N64 <em>スーパーマリオ64</em> オマージュ）</p>
+    </div>
+    <div id="bossbar">
+      <div class="label">Boss HP</div>
+      <div class="bar"><div id="bossFill" class="fill"></div></div>
+    </div>
+    <div id="controls" class="panel">
+      <div>
+        操作: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / 方向キー = 移動・ストレイフ, <kbd>Space</kbd> = ジャンプ/空中ジャンプ, <kbd>Shift</kbd> = 走る, <kbd>F</kbd> = パンチ,
+        マウスドラッグ = カメラ回転, <kbd>Q</kbd>/<kbd>E</kbd> = カメラ左右
+      </div>
+      <div>空中ジャンプは<strong>1回だけ</strong>（空中ジャンプ中には空中ジャンプできない）</div>
+    </div>
+    <div id="status" class="hidden">
+      <h2 id="statusTitle"></h2>
+      <p id="statusHint"></p>
+    </div>
+    <div id="corner">主人公: マルオ（マリオの親戚。帽子はより丸い）</div>
+  </div>
+  <div id="vignette"></div>
+  <canvas id="c"></canvas>
+
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.157.0/build/three.module.js';
+
+    // ---------- Renderer & Scene ----------
+    const canvas = document.getElementById('c');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.shadowMap.enabled = true;
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x87c7ff, 50, 180);
+    scene.background = new THREE.Color(0x87c7ff); // sky-ish
+
+    const camera = new THREE.PerspectiveCamera(65, innerWidth/innerHeight, 0.1, 1000);
+
+    // ---------- Lights ----------
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x6699aa, 0.7);
+    scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+    sun.position.set(30, 40, 20);
+    sun.castShadow = true;
+    const S = 60;
+    sun.shadow.camera.left = -S; sun.shadow.camera.right = S; sun.shadow.camera.top = S; sun.shadow.camera.bottom = -S;
+    sun.shadow.mapSize.set(2048, 2048);
+    scene.add(sun);
+
+    // ---------- Ground & simple world ----------
+    const groundGeo = new THREE.PlaneGeometry(400, 400, 40, 40);
+    groundGeo.rotateX(-Math.PI/2);
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x57b560, roughness:.95, metalness:0 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Some chunky platforms (simple course)
+    function makeBlock(x,z,w,h,d,c=0x7f7f7f){
+      const geo = new THREE.BoxGeometry(w,h,d);
+      const mat = new THREE.MeshStandardMaterial({ color:c, roughness:.8 });
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, h/2, z);
+      m.castShadow = m.receiveShadow = true;
+      scene.add(m);
+      return m;
+    }
+    const blocks = [
+      makeBlock(0, -40, 18, 6, 18, 0x8b8b8b),
+      makeBlock(28, -10, 16, 8, 16, 0x9c8b7a),
+      makeBlock(-28, -10, 10, 5, 10, 0x9c8b7a),
+      makeBlock(0, 18, 22, 4, 12, 0x808bd1),
+      makeBlock(-35, 40, 18, 6, 18, 0x7c9fdd),
+    ];
+
+    // ---------- Player (Maruo) ----------
+    const player = new THREE.Group();
+    scene.add(player);
+    player.position.set(0, 3, 12);
+
+    // Body
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.9, 1.2, 6, 12), new THREE.MeshStandardMaterial({color:0x2962ff, roughness:.7}));
+    body.castShadow = true; player.add(body); body.position.y = 1.7;
+
+    // Head
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.7, 16, 12), new THREE.MeshStandardMaterial({color:0xffe0bd, roughness:.7}));
+    head.position.y = 3.2; head.castShadow = true; player.add(head);
+
+    // Rounder Hat (より丸い)
+    const hat = new THREE.Mesh(new THREE.SphereGeometry(0.95, 16, 12), new THREE.MeshStandardMaterial({color:0xd22027, roughness:.6}));
+    hat.scale.y = 0.72; // round cap vibe
+    hat.position.set(0, 3.55, 0);
+    hat.castShadow = true; player.add(hat);
+    const brim = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.07, 10, 24), new THREE.MeshStandardMaterial({color:0xd22027, roughness:.6}));
+    brim.rotation.x = Math.PI/2; brim.position.y = 3.2; brim.castShadow = true; player.add(brim);
+
+    // Fists (for punch)
+    const armR = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.6, 6, 12), new THREE.MeshStandardMaterial({color:0xffe0bd}));
+    armR.position.set(0.75, 2.4, 0); armR.castShadow = true; player.add(armR);
+    const armL = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.6, 6, 12), new THREE.MeshStandardMaterial({color:0xffe0bd}));
+    armL.position.set(-0.75, 2.4, 0); armL.castShadow = true; player.add(armL);
+
+    const playerState = {
+      vel: new THREE.Vector3(0,0,0),
+      yaw: 0,
+      onGround: false,
+      jumpCount: 0,
+      move: { f:0, r:0 }, // forward/back, right/left
+      run: false,
+      punching: false,
+      punchTimer: 0,
+      canHitAgainAt: 0,
+      invincibleUntil: 0,
+    };
+
+    // ---------- Boss ----------
+    const boss = new THREE.Group();
+    scene.add(boss);
+    boss.position.set(0, 3, -30);
+
+    const bossBody = new THREE.Mesh(new THREE.CapsuleGeometry(2.0, 2.5, 8, 16), new THREE.MeshStandardMaterial({color:0x5a2a82, roughness:.7, metalness:.05}));
+    bossBody.castShadow = bossBody.receiveShadow = true; boss.add(bossBody); bossBody.position.y = 2.8;
+    const bossHead = new THREE.Mesh(new THREE.BoxGeometry(2.3, 1.6, 2.0), new THREE.MeshStandardMaterial({color:0x7a3aa2, roughness:.7}));
+    bossHead.castShadow = true; bossHead.position.y = 5.2; boss.add(bossHead);
+    const bossEyeL = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), new THREE.MeshStandardMaterial({color:0xffffff}));
+    const bossEyeR = bossEyeL.clone();
+    bossEyeL.position.set(-0.5, 5.5, 1.01); bossEyeR.position.set(0.5, 5.5, 1.01); boss.add(bossEyeL, bossEyeR);
+    const bossPupilL = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), new THREE.MeshStandardMaterial({color:0x111111}));
+    const bossPupilR = bossPupilL.clone(); bossPupilL.position.set(-0.5, 5.5, 1.25); bossPupilR.position.set(0.5, 5.5, 1.25); boss.add(bossPupilL, bossPupilR);
+
+    const bossState = {
+      hp: 100,
+      maxHp: 100,
+      speed: 2.4,
+      radius: 2.4,
+      invUntil: 0,
+      alive: true,
+    };
+
+    // ---------- Camera (simple chase) ----------
+    let camYaw = Math.PI; // start behind facing forward
+    let camPitch = 0.25;
+    const camDist = 9, camHeight = 3.2;
+
+    function updateCamera(dt){
+      // place camera at an offset around player based on yaw/pitch
+      const off = new THREE.Vector3(
+        Math.sin(camYaw) * camDist * Math.cos(camPitch),
+        camHeight + Math.sin(camPitch) * camDist,
+        Math.cos(camYaw) * camDist * Math.cos(camPitch)
+      );
+      const target = player.position.clone().add(new THREE.Vector3(0, 2.8, 0));
+      camera.position.copy(target.clone().add(off));
+      camera.lookAt(target);
+    }
+
+    // ---------- Input ----------
+    const keys = new Set();
+    window.addEventListener('keydown', (e)=>{
+      keys.add(e.key.toLowerCase());
+      if(e.key === ' '){ e.preventDefault(); tryJump(); }
+      if(e.key.toLowerCase() === 'f'){ tryPunch(); }
+    });
+    window.addEventListener('keyup', (e)=> keys.delete(e.key.toLowerCase()));
+
+    // Mouse drag to rotate camera
+    let dragging=false, lastX=0, lastY=0;
+    window.addEventListener('mousedown', (e)=>{ dragging=true; lastX=e.clientX; lastY=e.clientY; });
+    window.addEventListener('mouseup', ()=> dragging=false);
+    window.addEventListener('mousemove', (e)=>{
+      if(!dragging) return;
+      const dx = e.clientX - lastX; const dy = e.clientY - lastY; lastX = e.clientX; lastY = e.clientY;
+      camYaw -= dx * 0.005;
+      camPitch = Math.max(-0.2, Math.min(0.7, camPitch - dy * 0.004));
+    });
+    // Q/E rotate camera too
+    function handleCameraKeys(dt){
+      if(keys.has('q')) camYaw += 1.6*dt;
+      if(keys.has('e')) camYaw -= 1.6*dt;
+    }
+
+    function tryJump(){
+      const now = performance.now()/1000;
+      if(playerState.onGround){
+        playerState.vel.y = 8.5; // normal jump
+        playerState.onGround = false;
+        playerState.jumpCount = 1;
+        spinHat(0.6);
+      } else if(playerState.jumpCount === 1){
+        playerState.vel.y = 7.2; // one air jump only
+        playerState.jumpCount = 2;
+        // fun spin
+        spinHat(1.2);
+      }
+    }
+
+    function tryPunch(){
+      const now = performance.now()/1000;
+      if(playerState.punching) return;
+      playerState.punching = true; playerState.punchTimer = 0.28;
+      // quick wind-up punch animation on armR
+      armR.rotation.z = -0.8;
+    }
+
+    function spinHat(speed=1){
+      hat.userData.spin = (hat.userData.spin||0) + speed*6.28; // radians to spin over time
+    }
+
+    // ---------- Physics & Movement ----------
+    const g = -20.0;
+    function updatePlayer(dt){
+      // read inputs
+      playerState.move.f = (keys.has('w') || keys.has('arrowup') ? 1:0) + (keys.has('s') || keys.has('arrowdown') ? -1:0);
+      playerState.move.r = (keys.has('d') || keys.has('arrowright') ? 1:0) + (keys.has('a') || keys.has('arrowleft') ? -1:0);
+      playerState.run = keys.has('shift');
+
+      // move relative to camera yaw
+      const yaw = camYaw; // use camera heading
+      const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+      const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+
+      let wish = new THREE.Vector3();
+      wish.addScaledVector(forward, playerState.move.f);
+      wish.addScaledVector(right, playerState.move.r);
+      if(wish.lengthSq() > 0) wish.normalize();
+
+      const maxSpeed = playerState.run ? 9 : 6;
+      const accel = 32 * dt;
+      playerState.vel.x = THREE.MathUtils.damp(playerState.vel.x, wish.x * maxSpeed, 8, dt);
+      playerState.vel.z = THREE.MathUtils.damp(playerState.vel.z, wish.z * maxSpeed, 8, dt);
+
+      // face movement direction if moving
+      if(wish.lengthSq() > 0.01){
+        playerState.yaw = Math.atan2(playerState.vel.x, playerState.vel.z);
+        player.rotation.y = playerState.yaw;
+      }
+
+      // gravity
+      playerState.vel.y += g * dt;
+
+      // integrate
+      const next = player.position.clone().addScaledVector(playerState.vel, dt);
+
+      // ground / platform collisions (simple)
+      const groundY = sampleGroundY(next.x, next.z);
+      if(next.y <= groundY){
+        next.y = groundY; playerState.vel.y = 0; if(!playerState.onGround){ playerState.onGround = true; playerState.jumpCount = 0; }
+      } else {
+        playerState.onGround = false;
+      }
+
+      player.position.copy(next);
+
+      // punch animation timeline and hit window
+      if(playerState.punching){
+        playerState.punchTimer -= dt;
+        const t = Math.max(0, 0.28 - playerState.punchTimer);
+        // animate: wind-up (0-0.08), strike (0.08-0.20), recover (0.20-0.28)
+        if(playerState.punchTimer > 0){
+          if(t < 0.08){ armR.rotation.z = THREE.MathUtils.lerp(-0.8, 1.1, t/0.08); }
+          else if(t < 0.20){ armR.rotation.z = THREE.MathUtils.lerp(1.1, 0.2, (t-0.08)/0.12); }
+          else { armR.rotation.z = THREE.MathUtils.lerp(0.2, 0, (t-0.20)/0.08); }
+
+          // active hit frames roughly 0.10-0.18
+          if(t>0.10 && t<0.18){
+            tryHitBossWithPunch();
+          }
+        } else {
+          playerState.punching = false; armR.rotation.z = 0;
+        }
+      }
+
+      // Hat spin decay
+      if(hat.userData.spin && hat.userData.spin>0){
+        const s = Math.min(hat.userData.spin, 14*dt); hat.rotation.y += s; hat.userData.spin -= s;
+      }
+    }
+
+    function sampleGroundY(x,z){
+      // base ground at y=0, plus platform tops; simple highest surface under player
+      let y = 0;
+      for(const b of blocks){
+        const half = new THREE.Vector3(b.scale.x, b.scale.y, b.scale.z); // not usable because scale is 1; use geometry parameters
+        const bx = b.position.x, by = b.position.y, bz = b.position.z;
+        const hx = b.geometry.parameters.width/2; const hy = b.geometry.parameters.height/2; const hz = b.geometry.parameters.depth/2;
+        if(x>bx-hx && x<bx+hx && z>bz-hz && z<bz+hz){ y = Math.max(y, by+hy); }
+      }
+      return y;
+    }
+
+    function tryHitBossWithPunch(){
+      const now = performance.now()/1000;
+      if(now < bossState.invUntil || !bossState.alive) return;
+      const fistWorld = armR.getWorldPosition(new THREE.Vector3());
+      const toBoss = boss.position.clone().sub(fistWorld);
+      const dist = toBoss.length();
+      const facing = new THREE.Vector3( Math.sin(playerState.yaw), 0, Math.cos(playerState.yaw) );
+      const toBossDir = toBoss.clone().setY(0).normalize();
+      const facingDot = facing.dot(toBossDir);
+      if(dist < 3.0 && facingDot > 0.25){
+        damageBoss(12);
+        cameraShake(0.14, 0.25);
+        bossState.invUntil = now + 0.25;
+      }
+    }
+
+    function checkBossStomp(){
+      if(!bossState.alive) return;
+      // if player's feet are above boss and intersecting radius while falling -> stomp
+      const toPlayer = player.position.clone().sub(boss.position);
+      const horizontal = toPlayer.clone().setY(0).length();
+      const feetY = player.position.y; // player capsule base approximated by player's position
+      if(horizontal < bossState.radius*1.05 && feetY > boss.position.y + 4.2 && playerState.vel.y < -2){
+        damageBoss(20);
+        playerState.vel.y = 9.5; // bounce
+        spinHat(1.6);
+        cameraShake(0.18, 0.35);
+        const now = performance.now()/1000; bossState.invUntil = now + 0.35;
+      }
+    }
+
+    function damageBoss(amount){
+      bossState.hp = Math.max(0, bossState.hp - amount);
+      updateBossUI();
+      // brief red flash
+      const old = bossBody.material.color.clone();
+      bossBody.material.color.setHex(0xff4444);
+      setTimeout(()=> bossBody.material.color.copy(old), 80);
+      if(bossState.hp === 0){ bossState.alive = false; showWin(); dropStar(); }
+    }
+
+    function updateBossUI(){
+      const fill = document.getElementById('bossFill');
+      fill.style.width = (100 * bossState.hp / bossState.maxHp) + '%';
+    }
+
+    function updateBoss(dt){
+      if(!bossState.alive) return;
+      const now = performance.now()/1000;
+      // simple chase AI
+      const toPlayer = player.position.clone().sub(boss.position);
+      const flat = toPlayer.clone().setY(0);
+      const dist = flat.length();
+      if(dist > 2){
+        flat.normalize();
+        boss.position.addScaledVector(flat, bossState.speed * dt);
+        boss.rotation.y = Math.atan2(flat.x, flat.z);
+      }
+      // keep on ground/platform
+      const y = sampleGroundY(boss.position.x, boss.position.z);
+      boss.position.y = y + 3; // approx capsule center height
+
+      if(now < bossState.invUntil) return;
+      // collision with player – shove player slightly if too close
+      if(dist < 2.6){
+        const push = flat.clone().normalize().multiplyScalar(5);
+        playerState.vel.add(push);
+      }
+    }
+
+    // ---------- Camera shake ----------
+    let shakeT = 0, shakeAmp = 0;
+    function cameraShake(t=0.1, amp=0.2){ shakeT = t; shakeAmp = amp; }
+
+    function applyCameraShake(){
+      if(shakeT>0){
+        shakeT -= dt; const s = shakeAmp * (shakeT/0.1);
+        camera.position.x += (Math.random()-0.5)*s;
+        camera.position.y += (Math.random()-0.5)*s*0.6;
+        camera.position.z += (Math.random()-0.5)*s;
+      }
+    }
+
+    // ---------- Star on win ----------
+    let star=null, starSpin=0;
+    function dropStar(){
+      const geo = new THREE.IcosahedronGeometry(0.7, 0);
+      const mat = new THREE.MeshStandardMaterial({ color:0xffe066, emissive:0x332200, metalness:.2, roughness:.3 });
+      star = new THREE.Mesh(geo, mat); star.castShadow = true; star.position.copy(boss.position).add(new THREE.Vector3(0,2.4,0));
+      scene.add(star);
+    }
+
+    // ---------- UI Status ----------
+    const status = document.getElementById('status');
+    const statusTitle = document.getElementById('statusTitle');
+    const statusHint = document.getElementById('statusHint');
+    function showWin(){
+      status.classList.remove('hidden');
+      statusTitle.textContent = 'ボス撃破！';
+      statusHint.innerHTML = 'おめでとう！ <b>Reset</b> でやり直し';
+    }
+
+    // ---------- Reset ----------
+    function resetGame(){
+      bossState.hp = bossState.maxHp; bossState.alive = true; updateBossUI();
+      boss.position.set(0, 3, -30);
+      player.position.set(0, 3, 12);
+      playerState.vel.set(0,0,0); playerState.onGround=false; playerState.jumpCount=0;
+      status.classList.add('hidden');
+      if(star){ scene.remove(star); star.geometry.dispose(); star.material.dispose(); star=null; }
+    }
+    document.getElementById('resetBtn').addEventListener('click', resetGame);
+
+    // ---------- Resize ----------
+    function onResize(){ camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); }
+    addEventListener('resize', onResize);
+
+    // ---------- Main Loop ----------
+    let prev = performance.now()/1000; let dt = 0;
+    function frame(){
+      const now = performance.now()/1000; dt = Math.min(0.033, now - prev); prev = now;
+      handleCameraKeys(dt);
+      updatePlayer(dt);
+      checkBossStomp();
+      updateBoss(dt);
+      updateCamera(dt);
+      applyCameraShake();
+
+      // spin victory star
+      if(star){ star.rotation.y += 1.8*dt; star.position.y = Math.max(sampleGroundY(star.position.x, star.position.z)+1.2, star.position.y - 0.02); }
+
+      renderer.render(scene, camera);
+      requestAnimationFrame(frame);
+    }
+    updateBossUI();
+    frame();
+  </script>
+</body>
+</html>
